@@ -1,0 +1,328 @@
+#!/bin/bash
+
+#
+# Services Switch
+#
+# script for start/stop array of services
+#
+
+# [debbug mode] enable a mode of the shell where all executed commands are printed to the terminal
+#set -x
+
+OPTION1=${1}
+
+#Color for print
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+main_services_array=(
+apache2.service
+mariadb.service
+docker.service
+docker.socket
+containerd.service
+)
+
+#Services Array
+services_array=(
+cron.service
+nmbd.service
+smbd.service
+vsftpd.service
+cups.service
+)
+
+#Containers Array
+containers_array=(
+portainer
+node-exporter
+mysql-exporter
+process-exporter
+cadvisor
+)
+
+#Function to enable/disable exact crontab record
+cron_ctl () {
+  crontab_line="0,30 \* \* \* \* /opt/McAfee/agent/scripts/ma checkhealth >/dev/null 2>/dev/null"
+  if [[ "${1}" == "enable" ]];
+  then
+    crontab -l | sed -e "s|^# ${crontab_line}|${crontab_line}|g" | crontab -
+  elif [[ "${1}" == "disable" ]];
+  then
+    crontab -l | sed -e "s|^${crontab_line}|# ${crontab_line}|g" | crontab -
+  elif [[ "${1}" == "status" ]];
+  then
+    if crontab -l | grep -q "^${crontab_line}";
+    then
+      return 0
+    else
+      return 1
+    fi
+  else
+    echo -e "${RED}Declared argument is not supported${NC}"
+  fi
+}
+
+#Function to get current service status
+service_status () {
+  if [[ "${1}" == "is_enabled" ]];
+  then
+    if systemctl status ${2} | grep "Loaded:" | awk -F";" '{ print $2 }' | grep -q "enabled";
+    then
+      return 0
+    else
+      return 1
+    fi
+  elif [[ "${1}" == "is_running" ]];
+  then
+    if ! systemctl status ${2} | grep -q "Active: inactive (dead)";
+    then
+      return 0
+    else
+      return 1
+    fi
+  else
+    echo -e "${RED}Declared argument is not supported${NC}"
+  fi
+}
+
+#Function to get current container status
+container_status () {
+  if [[ "${1}" == "is_running" ]];
+  then
+    if ! docker ps -a --format '{{.Names}}' | grep -Fq "${2}";
+    then
+      return 0
+    else
+      return 1
+    fi
+  else
+    echo -e "${RED}Declared argument is not supported${NC}"
+  fi
+}
+
+startfn() {
+  #Iteration with loop to start services from array
+  for service in "${main_services_array[@]}"
+  do
+    if ! service_status is_running ${service};
+    then
+      echo -e "Starting: ${service}..."
+      systemctl start ${service} >/dev/null 2>&1
+      sleep 2
+    else
+      echo -e "Service: ${service} ${GREEN}already working${NC}."
+    fi
+  done
+  for service in "${services_array[@]}"
+  do
+    if ! service_status is_running ${service};
+    then
+      echo -e "Starting: ${service}..."
+      systemctl start ${service} >/dev/null 2>&1
+      sleep 1
+    else
+      echo -e "Service: ${service} ${GREEN}already working${NC}."
+    fi
+  done
+  #Iteration with loop to start containers from array
+  for container in "${containers_array[@]}"
+  do
+    if ! container_status is_running ${container};
+    then
+      echo -e "Starting: ${container}..."
+      docker start ${container} >/dev/null 2>&1
+      sleep 1
+    else
+      echo -e "Container: ${container} ${GREEN}already working${NC}."
+    fi
+  done
+}
+
+stopfn() {
+  #Iteration with loop to stop containers from array
+  for container in "${containers_array[@]}"
+  do
+    if container_status is_running ${container};
+    then
+      echo -e "Stopping: ${container}..."
+      docker stop ${container} >/dev/null 2>&1
+      sleep 1
+    else
+      echo -e "Container: ${container} is ${RED}already stopped${NC}."
+    fi
+  done
+  #Iteration with loop to stop services from array
+  for service in "${services_array[@]}"
+  do
+    if service_status is_running ${service};
+    then
+      echo -e "Stopping: ${service}..."
+      systemctl stop ${service} >/dev/null 2>&1
+      sleep 1
+    else
+      echo -e "Service: ${service} is ${RED}already stopped${NC}."
+    fi
+  done
+  for service in "${main_services_array[@]}"
+  do
+    if service_status is_running ${service};
+    then
+      echo -e "Stopping: ${service}..."
+      systemctl stop ${service} >/dev/null 2>&1
+      sleep 1
+    else
+      echo -e "Service: ${service} is ${RED}already stopped${NC}."
+    fi
+  done
+}
+
+restartfn() {
+  stopfn && \
+  sleep 10 && \
+  startfn
+}
+
+enablefn() {
+  for service in "${main_services_array[@]}"
+  do
+    if ! service_status is_enabled ${service};
+    then
+      echo -e "Enabling: ${service}..."
+      systemctl enable --now ${service} >/dev/null 2>&1
+      sleep 1
+    else
+      echo -e "Service: ${service} ${GREEN}already working${NC}."
+    fi
+  done
+  #Iteration with loop to start services from array
+  for service in "${services_array[@]}"
+  do
+    if ! service_status is_enabled ${service};
+    then
+      echo -e "Enabling: ${service}..."
+      systemctl enable --now ${service} >/dev/null 2>&1
+      sleep 1
+    else
+      echo -e "Service: ${service} ${GREEN}already working${NC}."
+    fi
+  done
+}
+
+disablefn() {
+  #Iteration with loop to start services from array
+  for service in "${services_array[@]}"
+  do
+    if service_status is_enabled ${service};
+    then
+      echo -e "Disabling: ${service}..."
+      systemctl disable --now ${service} >/dev/null 2>&1
+      sleep 1
+    else
+      echo -e "Service: ${service} ${RED}already stopped${NC}."
+    fi
+  done
+  for service in "${main_services_array[@]}"
+  do
+    if service_status is_enabled ${service};
+    then
+      echo -e "Disabling: ${service}..."
+      systemctl disable --now ${service} >/dev/null 2>&1
+      sleep 1
+    else
+      echo -e "Service: ${service} ${RED}already stopped${NC}."
+    fi
+  done
+}
+
+statusfn() {
+  #Iteration with loop to start services from array
+  echo -e "Services running status:"
+  for service in "${services_array[@]}"
+  do
+    if service_status is_running ${service};
+    then
+      echo -e "Service: ${service} is ${GREEN}running${NC}."
+    else
+      echo -e "Service: ${service} is ${RED}stopped${NC}."
+    fi
+  done
+  echo -e "\nServices autostart status:"
+  for service in "${services_array[@]}"
+  do
+    if service_status is_enabled ${service};
+    then
+      echo -e "Service: ${service} is ${GREEN}enabled${NC}."
+    else
+      echo -e "Service: ${service} is ${RED}disabled${NC}."
+    fi
+  done
+  echo -e "\nServices running status:"
+  for service in "${main_services_array[@]}"
+  do
+    if service_status is_running ${service};
+    then
+      echo -e "Service: ${service} is ${GREEN}running${NC}."
+    else
+      echo -e "Service: ${service} is ${RED}stopped${NC}."
+    fi
+  done
+  echo -e "\nServices autostart status:"
+  for service in "${main_services_array[@]}"
+  do
+    if service_status is_enabled ${service};
+    then
+      echo -e "Service: ${service} is ${GREEN}enabled${NC}."
+    else
+      echo -e "Service: ${service} is ${RED}disabled${NC}."
+    fi
+  done
+  echo -e "\nContainers autostart status:"
+  for container in "${containers_array[@]}"
+  do
+    if container_status is_running ${service};
+    then
+      echo -e "Container: ${container} is ${GREEN}running${NC}."
+    else
+      echo -e "Container: ${container} is ${RED}stopped${NC}."
+    fi
+  done
+}
+
+runfn() {
+    # run script as start or stop services
+    if [ -z "${OPTION1}" ];
+    then
+        OPTION1=`basename ${0} .sh | sed 's/srv_sw//'`
+    fi
+    namingfn ${OPTION1}
+}
+
+helpfn() {
+    # help how use script
+    echo -e "\nUsing script:\nsrv_sw.sh [start|stop|restart|enable|disable|status|help]\n${GREEN}start${NC} - start all stopped citical services:\n    apache2.service\n    mariadb.service\n    docker.service\n    docker.socket\n    containerd.service\n    cron.service\n    nmbd.service\n    smbd.service\n    vsftpd.service\n    cups.service\nand containers:\n    portainer\n    node-exporter\n    mysql-exporter\n    process-exporter\n    cadvisor\n\n${GREEN}stop${NC} - stop all stopped citical services and containers (same as start parameter)\n\n${GREEN}restart${NC} - restart all stopped citical services and containers (same as start parameter)\n\n${GREEN}enable${NC} - enable (add to autostart) all stopped citical services and containers (same as start parameter)\n\n${GREEN}disable${NC} - disable (remove from autostart) all stopped citical services and containers (same as start parameter)\n\n${GREEN}help${NC} - get this info\n"
+    exit 0
+}
+
+namingfn() {
+    # start or stop services
+    # echo "namingfn: ${OPTION1}"
+    case "${OPTION1}" in
+        stop|STOP )    stopfn ;;
+        start|START )  startfn ;;
+        restart|RESTART ) restartfn ;;
+        enable|ENABLE ) enablefn ;;
+        disable|DISABLE ) disablefn ;;
+        status|STATUS ) statusfn ;;
+        *)  helpfn ;;
+    esac
+}
+
+main() {
+    runfn ${OPTION1}
+}
+
+#just run
+main ${1}
+
